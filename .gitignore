@@ -3,3 +3,19 @@ __pycache__/
 .pytest_cache/
 .pytest_tmp/
 *.egg-info/
+
+# Ambiente virtual
+.venv/
+venv/
+env/
+
+# Robô de batimento de cadastro: entrada/saída reais do usuário não vão pro git,
+# apenas a estrutura de pastas é preservada via .gitkeep.
+entrada/base_legal_one/*
+!entrada/base_legal_one/.gitkeep
+entrada/planilhas_cadastro/*
+!entrada/planilhas_cadastro/.gitkeep
+entrada/export_ged/*
+!entrada/export_ged/.gitkeep
+saida/*
+!saida/.gitkeep
