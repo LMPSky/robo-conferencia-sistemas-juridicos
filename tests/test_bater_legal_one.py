@@ -65,8 +65,8 @@ def test_bater_publicacoes_legal_one(tmp_path: Path):
     assert resultado.publicacoes_lidas == 3
     # Apenas as publicações 1 e 3 têm CNJ que bate com a base do Legal One.
     assert resultado.publicacoes_com_match == 2
-    # Publicação 3 gera 2 linhas (2 CNJs que batem), publicação 1 gera 1 linha.
-    assert resultado.linhas_geradas == 3
+    # Publicação 3 tem 2 CNJs que batem na mesma linha -> 2 colunas de CNJ.
+    assert resultado.max_cnj_por_publicacao == 2
 
     from openpyxl import load_workbook
 
@@ -74,13 +74,27 @@ def test_bater_publicacoes_legal_one(tmp_path: Path):
     ws = wb.active
     linhas = list(ws.iter_rows(values_only=True))
     cabecalho = linhas[0]
-    assert cabecalho[-1] == COLUNA_CNJ_SAIDA
+    assert cabecalho[-2:] == (f"{COLUNA_CNJ_SAIDA} 1", f"{COLUNA_CNJ_SAIDA} 2")
     assert cabecalho[:3] == ("Diário", "Data da Publicação", "Conteúdo")
 
-    cnjs_na_saida = {linha[-1] for linha in linhas[1:]}
+    # Uma linha de saída por publicação com match (não uma por CNJ).
+    assert len(linhas) - 1 == 2
+
+    cnjs_na_saida = set()
+    for linha in linhas[1:]:
+        cnjs_na_saida.update(v for v in linha[-2:] if v)
     assert cnjs_na_saida == {
         "0118284-78.2026.8.04.1000",
         "0667841-11.2025.8.04.1000",
     }
     # Processo sem match na base não deve aparecer na saída.
     assert all("0000000-00.2020.8.04.0000" not in str(linha) for linha in linhas[1:])
+
+    # A publicação 3 (dois processos) deve ter ambas as colunas preenchidas,
+    # e a publicação 1 (um processo) deve ter a segunda coluna vazia.
+    por_data = {linha[1]: linha for linha in linhas[1:]}
+    assert por_data["2026-01-01"][-2:] == ("0118284-78.2026.8.04.1000", None)
+    assert por_data["2026-01-03"][-2:] == (
+        "0118284-78.2026.8.04.1000",
+        "0667841-11.2025.8.04.1000",
+    )

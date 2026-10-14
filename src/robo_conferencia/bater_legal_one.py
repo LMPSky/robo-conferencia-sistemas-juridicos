@@ -2,15 +2,18 @@
 
 Fluxo:
 1. Lê a planilha de publicações e extrai, de uma coluna de texto livre (por
-   padrão a coluna C), todos os números CNJ encontrados.
+   padrão a coluna C), todos os números CNJ encontrados (com ou sem
+   pontuação).
 2. Lê a planilha de base do Legal One e extrai os números CNJ de uma coluna
    (detectada automaticamente ou informada explicitamente).
-3. Para cada número CNJ encontrado em uma publicação, se ele existir na base
-   do Legal One, gera uma linha de saída contendo todas as colunas originais
-   da publicação + uma coluna "Número CNJ" com o processo encontrado.
+3. Para cada publicação, verifica todos os CNJs encontrados no texto e mantém
+   aqueles que existem na base do Legal One. Gera uma linha de saída por
+   publicação contendo todas as colunas originais + uma coluna por CNJ que
+   bateu (`Número CNJ`, ou `Número CNJ 1`, `Número CNJ 2`, ... quando há mais
+   de um processo mencionado na mesma publicação), para não perder nenhum
+   processo encontrado.
 4. Publicações sem nenhum CNJ que bata com a base do Legal One são
-   descartadas. Publicações com múltiplos CNJs batendo geram uma linha por
-   processo encontrado (para preservar o detalhe de qual processo bateu).
+   descartadas.
 """
 from __future__ import annotations
 
@@ -30,10 +33,10 @@ COLUNA_CNJ_SAIDA = "Número CNJ"
 
 @dataclass
 class ResultadoBatimento:
-    linhas_geradas: int
     publicacoes_lidas: int
     publicacoes_com_match: int
     processos_legal_one: int
+    max_cnj_por_publicacao: int
 
 
 def _carregar_planilha(caminho: Path, aba: Optional[str] = None) -> Worksheet:
@@ -173,13 +176,11 @@ def bater_publicacoes_legal_one(
     idx_texto = _resolver_indice_coluna(cabecalho, coluna_texto, "planilha de publicações")
     linhas_dados = linhas[1:]
 
-    wb_saida = Workbook()
-    ws_saida = wb_saida.active
-    ws_saida.title = "Processos encontrados"
-    ws_saida.append([*cabecalho, COLUNA_CNJ_SAIDA])
-
-    publicacoes_com_match = 0
-    linhas_geradas = 0
+    # Primeira passada: para cada publicação, encontra todos os CNJs do texto
+    # que batem com a base do Legal One (sem descartar nenhum, mesmo que haja
+    # vários processos distintos mencionados na mesma publicação).
+    linhas_com_match: List[tuple] = []
+    max_matches = 0
     for linha in linhas_dados:
         texto = linha[idx_texto] if idx_texto < len(linha) else None
         if not texto:
@@ -192,20 +193,40 @@ def bater_publicacoes_legal_one(
         ]
         if not matches:
             continue
-        publicacoes_com_match += 1
-        for numero in matches:
-            ws_saida.append([*linha, numero])
-            linhas_geradas += 1
+        linhas_com_match.append((linha, matches))
+        max_matches = max(max_matches, len(matches))
+
+    wb_saida = Workbook()
+    ws_saida = wb_saida.active
+    ws_saida.title = "Processos encontrados"
+    colunas_cnj = _nomes_colunas_cnj(max_matches)
+    ws_saida.append([*cabecalho, *colunas_cnj])
+
+    for linha, matches in linhas_com_match:
+        preenchimento = list(matches) + [None] * (max_matches - len(matches))
+        ws_saida.append([*linha, *preenchimento])
 
     saida_path.parent.mkdir(parents=True, exist_ok=True)
     wb_saida.save(saida_path)
 
     return ResultadoBatimento(
-        linhas_geradas=linhas_geradas,
         publicacoes_lidas=len(linhas_dados),
-        publicacoes_com_match=publicacoes_com_match,
+        publicacoes_com_match=len(linhas_com_match),
         processos_legal_one=len(processos_legal_one),
+        max_cnj_por_publicacao=max_matches,
     )
+
+
+def _nomes_colunas_cnj(quantidade: int) -> List[str]:
+    """Gera os nomes das colunas de CNJ na saída.
+
+    Com apenas 1 coluna necessária, usa o nome simples (`Número CNJ`). Com
+    mais de uma, numera cada coluna (`Número CNJ 1`, `Número CNJ 2`, ...) para
+    não perder nenhum processo encontrado na mesma publicação.
+    """
+    if quantidade <= 1:
+        return [COLUNA_CNJ_SAIDA]
+    return [f"{COLUNA_CNJ_SAIDA} {i}" for i in range(1, quantidade + 1)]
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -262,7 +283,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"Processos na base do Legal One: {resultado.processos_legal_one}")
     print(f"Publicações lidas: {resultado.publicacoes_lidas}")
     print(f"Publicações com match: {resultado.publicacoes_com_match}")
-    print(f"Linhas geradas na planilha de saída: {resultado.linhas_geradas}")
+    print(f"Máximo de CNJs encontrados em uma mesma publicação: {resultado.max_cnj_por_publicacao}")
     print(f"Planilha gerada em: {args.saida}")
     return 0
 

@@ -41,3 +41,16 @@ def test_find_cnj_numbers_ignora_duplicatas():
 def test_find_cnj_numbers_texto_vazio():
     assert find_cnj_numbers("") == []
     assert find_cnj_numbers(None) == []
+
+
+def test_find_cnj_numbers_numero_unico_sem_pontuacao():
+    texto = "Processo registrado. Número Único: 00011116520268042800 Partes:"
+    assert find_cnj_numbers(texto) == ["0001111-65.2026.8.04.2800"]
+
+
+def test_find_cnj_numbers_ignora_digitos_colados_fora_do_padrao():
+    # Sequência de dígitos mais longa que 20 (ex: número de protocolo colado
+    # a um CEP/telefone): não deve extrair uma janela de 20 dígitos
+    # deslocada/incorreta.
+    texto = "Protocolo999900011116520268042800111 fim"
+    assert find_cnj_numbers(texto) == []
