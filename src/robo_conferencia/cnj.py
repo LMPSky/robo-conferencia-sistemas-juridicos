@@ -21,8 +21,13 @@ import re
 from typing import Iterable, Iterator, List
 
 # Sequência de 20 dígitos com pontuação opcional nos separadores padrão.
+# As âncoras (?<!\d) e (?!\d) garantem que o match comece e termine exatamente
+# nos limites do número: sem elas, um número "Número Único" sem pontuação
+# (ex: 00011116520268042800) que esteja colado a outros dígitos (CEP,
+# telefone, protocolo etc.) poderia ser capturado com um deslocamento errado,
+# gerando um CNJ inválido/incorreto em vez de não encontrar nada.
 _CNJ_PATTERN = re.compile(
-    r"\d{7}\s*-?\s*\d{2}\s*\.?\s*\d{4}\s*\.?\s*\d\s*\.?\s*\d{2}\s*\.?\s*\d{4}"
+    r"(?<!\d)\d{7}\s*-?\s*\d{2}\s*\.?\s*\d{4}\s*\.?\s*\d\s*\.?\s*\d{2}\s*\.?\s*\d{4}(?!\d)"
 )
 
 _DIGITS_ONLY = re.compile(r"\D+")
