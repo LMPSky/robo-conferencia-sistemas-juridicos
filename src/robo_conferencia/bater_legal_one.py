@@ -6,14 +6,16 @@ Fluxo:
    pontuação).
 2. Lê a planilha de base do Legal One e extrai os números CNJ de uma coluna
    (detectada automaticamente ou informada explicitamente).
-3. Para cada publicação, verifica todos os CNJs encontrados no texto e mantém
-   aqueles que existem na base do Legal One. Gera uma linha de saída por
-   publicação contendo todas as colunas originais + uma coluna por CNJ que
-   bateu (`Número CNJ`, ou `Número CNJ 1`, `Número CNJ 2`, ... quando há mais
-   de um processo mencionado na mesma publicação), para não perder nenhum
-   processo encontrado.
-4. Publicações sem nenhum CNJ que bata com a base do Legal One são
-   descartadas.
+3. Gera uma linha de saída para CADA publicação (nenhuma é descartada), com
+   todas as colunas originais + uma coluna por CNJ encontrado no texto
+   (`Número CNJ`, ou `Número CNJ 1`, `Número CNJ 2`, ... quando há mais de um
+   processo citado na mesma publicação). Publicações muito grandes costumam
+   citar vários CNJs apenas como referência a outros processos, então o
+   robô não tenta adivinhar qual é "o" processo da publicação: ele lista
+   todos e deixa a conferência final (via a cor) a cargo de quem for
+   trabalhar a planilha.
+4. As células de CNJ que existem na base do Legal One são pintadas de verde,
+   para destacar rapidamente quais processos citados já estão cadastrados.
 """
 from __future__ import annotations
 
@@ -24,17 +26,27 @@ from pathlib import Path
 from typing import List, Optional, Sequence, Set
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
 from .cnj import find_cnj_numbers, normalize_cnj
 
 COLUNA_CNJ_SAIDA = "Número CNJ"
 
+# Verde claro (preenchimento) usado para destacar CNJs encontrados na base do
+# Legal One.
+PREENCHIMENTO_MATCH = PatternFill(
+    start_color="FFC6EFCE", end_color="FFC6EFCE", fill_type="solid"
+)
+
 
 @dataclass
 class ResultadoBatimento:
     publicacoes_lidas: int
+    publicacoes_com_cnj: int
     publicacoes_com_match: int
+    cnjs_encontrados: int
+    cnjs_com_match: int
     processos_legal_one: int
     max_cnj_por_publicacao: int
 
@@ -161,6 +173,10 @@ def bater_publicacoes_legal_one(
 ) -> ResultadoBatimento:
     """Executa o batimento completo e grava a planilha de saída.
 
+    Nenhuma publicação é descartada: todas as linhas da planilha original são
+    mantidas na saída, com uma coluna por CNJ encontrado no texto. As células
+    cujo CNJ existe na base do Legal One são pintadas de verde.
+
     Retorna um `ResultadoBatimento` com estatísticas da execução.
     """
     processos_legal_one = _carregar_cnj_legal_one(
@@ -176,44 +192,59 @@ def bater_publicacoes_legal_one(
     idx_texto = _resolver_indice_coluna(cabecalho, coluna_texto, "planilha de publicações")
     linhas_dados = linhas[1:]
 
-    # Primeira passada: para cada publicação, encontra todos os CNJs do texto
-    # que batem com a base do Legal One (sem descartar nenhum, mesmo que haja
-    # vários processos distintos mencionados na mesma publicação).
-    linhas_com_match: List[tuple] = []
-    max_matches = 0
+    # Primeira passada: para cada publicação (sem descartar nenhuma), extrai
+    # todos os CNJs citados no texto, na ordem em que aparecem.
+    cnjs_por_linha: List[List[str]] = []
+    max_cnj = 0
+    publicacoes_com_cnj = 0
+    cnjs_encontrados = 0
+    cnjs_com_match = 0
     for linha in linhas_dados:
         texto = linha[idx_texto] if idx_texto < len(linha) else None
-        if not texto:
-            continue
-        numeros_encontrados = find_cnj_numbers(str(texto))
-        matches = [
-            numero
-            for numero in numeros_encontrados
-            if normalize_cnj(numero) in processos_legal_one
-        ]
-        if not matches:
-            continue
-        linhas_com_match.append((linha, matches))
-        max_matches = max(max_matches, len(matches))
+        numeros = find_cnj_numbers(str(texto)) if texto else []
+        cnjs_por_linha.append(numeros)
+        if numeros:
+            publicacoes_com_cnj += 1
+        max_cnj = max(max_cnj, len(numeros))
+        cnjs_encontrados += len(numeros)
+        cnjs_com_match += sum(
+            1 for n in numeros if normalize_cnj(n) in processos_legal_one
+        )
 
     wb_saida = Workbook()
     ws_saida = wb_saida.active
-    ws_saida.title = "Processos encontrados"
-    colunas_cnj = _nomes_colunas_cnj(max_matches)
+    ws_saida.title = "Publicações"
+    colunas_cnj = _nomes_colunas_cnj(max_cnj)
     ws_saida.append([*cabecalho, *colunas_cnj])
 
-    for linha, matches in linhas_com_match:
-        preenchimento = list(matches) + [None] * (max_matches - len(matches))
+    idx_primeira_coluna_cnj = len(cabecalho)
+    publicacoes_com_match = 0
+    for linha, numeros in zip(linhas_dados, cnjs_por_linha):
+        preenchimento = list(numeros) + [None] * (max_cnj - len(numeros))
         ws_saida.append([*linha, *preenchimento])
+        tem_match_na_linha = False
+        linha_excel = ws_saida.max_row
+        for offset, numero in enumerate(numeros):
+            if normalize_cnj(numero) in processos_legal_one:
+                tem_match_na_linha = True
+                coluna_excel = idx_primeira_coluna_cnj + offset + 1
+                ws_saida.cell(row=linha_excel, column=coluna_excel).fill = (
+                    PREENCHIMENTO_MATCH
+                )
+        if tem_match_na_linha:
+            publicacoes_com_match += 1
 
     saida_path.parent.mkdir(parents=True, exist_ok=True)
     wb_saida.save(saida_path)
 
     return ResultadoBatimento(
         publicacoes_lidas=len(linhas_dados),
-        publicacoes_com_match=len(linhas_com_match),
+        publicacoes_com_cnj=publicacoes_com_cnj,
+        publicacoes_com_match=publicacoes_com_match,
+        cnjs_encontrados=cnjs_encontrados,
+        cnjs_com_match=cnjs_com_match,
         processos_legal_one=len(processos_legal_one),
-        max_cnj_por_publicacao=max_matches,
+        max_cnj_por_publicacao=max_cnj,
     )
 
 
@@ -222,7 +253,7 @@ def _nomes_colunas_cnj(quantidade: int) -> List[str]:
 
     Com apenas 1 coluna necessária, usa o nome simples (`Número CNJ`). Com
     mais de uma, numera cada coluna (`Número CNJ 1`, `Número CNJ 2`, ...) para
-    não perder nenhum processo encontrado na mesma publicação.
+    não perder nenhum processo citado na mesma publicação.
     """
     if quantidade <= 1:
         return [COLUNA_CNJ_SAIDA]
@@ -232,9 +263,9 @@ def _nomes_colunas_cnj(quantidade: int) -> List[str]:
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Extrai números CNJ da planilha de publicações, bate com a base "
-            "do Legal One e gera uma planilha apenas com os processos que "
-            "deram match."
+            "Extrai todos os números CNJ citados em cada publicação, bate "
+            "com a base do Legal One e gera uma planilha com todas as "
+            "publicações, destacando em verde os CNJs encontrados na base."
         )
     )
     parser.add_argument("publicacoes", type=Path, help="Planilha de publicações (.xlsx)")
@@ -282,8 +313,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     print(f"Processos na base do Legal One: {resultado.processos_legal_one}")
     print(f"Publicações lidas: {resultado.publicacoes_lidas}")
-    print(f"Publicações com match: {resultado.publicacoes_com_match}")
-    print(f"Máximo de CNJs encontrados em uma mesma publicação: {resultado.max_cnj_por_publicacao}")
+    print(f"Publicações com ao menos um CNJ citado: {resultado.publicacoes_com_cnj}")
+    print(f"Publicações com ao menos um CNJ encontrado na base: {resultado.publicacoes_com_match}")
+    print(f"Total de CNJs citados: {resultado.cnjs_encontrados}")
+    print(f"Total de CNJs encontrados na base (pintados de verde): {resultado.cnjs_com_match}")
+    print(f"Máximo de CNJs citados em uma mesma publicação: {resultado.max_cnj_por_publicacao}")
     print(f"Planilha gerada em: {args.saida}")
     return 0
 

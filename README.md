@@ -5,16 +5,22 @@ Robô de conferência e batimento entre sistemas jurídicos (Legal One x ADVWIN)
 
 Script que:
 
-1. Extrai todos os números de processo no padrão CNJ (ex:
-   `0118284-78.2026.8.04.1000`) encontrados no texto livre de uma coluna de
-   uma planilha de publicações (padrão: coluna C).
+1. Extrai TODOS os números de processo no padrão CNJ (ex:
+   `0118284-78.2026.8.04.1000`, com ou sem pontuação) citados no texto livre
+   de uma coluna de uma planilha de publicações (padrão: coluna C).
 2. Carrega os números de processo cadastrados em uma planilha de base do
    Legal One (a coluna de CNJ é detectada automaticamente, ou pode ser
    informada explicitamente).
-3. Gera uma nova planilha `.xlsx` apenas com as publicações cujo CNJ bate com
-   algum processo da base do Legal One, preservando todas as colunas
-   originais da publicação e adicionando uma coluna `Número CNJ` com o
-   processo encontrado. Publicações sem nenhum CNJ na base são descartadas.
+3. Gera uma nova planilha `.xlsx` com **todas** as publicações da planilha
+   original (nenhuma é descartada), preservando todas as colunas originais e
+   adicionando uma coluna por CNJ citado no texto (`Número CNJ` quando há
+   apenas um por publicação em toda a planilha, ou `Número CNJ 1`,
+   `Número CNJ 2`, ... quando alguma publicação cita mais de um). As células
+   cujo CNJ foi encontrado na base do Legal One são pintadas de verde, para
+   facilitar a conferência manual — publicações muito longas costumam citar
+   vários processos apenas como referência, então o robô não tenta adivinhar
+   qual é "o" processo da publicação: lista todos e destaca os que já estão
+   cadastrados no Legal One.
 
 ### Instalação
 
