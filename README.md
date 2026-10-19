@@ -64,6 +64,45 @@ que processos que batem com a base do Legal One saem como `CADASTRADO`, que
 processos que não batem saem como `PENDENTE`, e que uma linha sem CNJ e sem
 outro número sai como `SEM NÚMERO IDENTIFICADO`.
 
+## Triagem de grupos do GED baixados em lote (sem abrir cada grupo)
+
+Quando os processos estão organizados em pastas/grupos dentro do sistema e o
+download em massa só traz uma planilha com o *nome* de cada grupo (sem o
+conteúdo), abrir cada grupo manualmente é inviável se houver muitos. Este
+script extrai automaticamente o número CNJ do nome do grupo (quando ele
+estiver presente, ainda que junto de outro texto) e já classifica o grupo
+comparando com a base do Legal One — assim só é preciso abrir manualmente os
+grupos cujo nome não tem nenhum CNJ identificável.
+
+### Uso
+
+```powershell
+$env:PYTHONPATH = "src"
+py -m robo_conferencia.listar_pendencias_grupos caminho\grupos_ged.xlsx caminho\base_legal_one.xlsx caminho\saida.xlsx
+```
+
+A planilha de saída tem todas as colunas originais do arquivo de grupos, mais
+`Número CNJ` e `Status`:
+
+- `CADASTRADO`: o CNJ extraído do nome do grupo já está na base do Legal One.
+- `PENDENTE`: o CNJ extraído do nome do grupo não está na base do Legal One.
+- `SEM NÚMERO IDENTIFICADO`: não foi possível extrair um CNJ do nome do
+  grupo — esse grupo precisa ser aberto manualmente para verificação.
+
+Parâmetros opcionais:
+
+- `--coluna-texto`: coluna da planilha de grupos com o nome/texto de cada
+  grupo (letra do Excel, índice 0-based ou nome do cabeçalho). Padrão: `A`.
+- `--aba-grupos`: nome da aba da planilha de grupos, se não for a primeira.
+- `--coluna-cnj-legal-one` / `--aba-legal-one`: iguais ao script de
+  batimento de publicações, abaixo.
+
+### Testes
+
+```powershell
+py -m pytest tests -q
+```
+
 ## Batimento de publicações com a base do Legal One
 
 Script que:
