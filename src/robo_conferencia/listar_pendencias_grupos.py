@@ -155,9 +155,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument(
-        "grupos", type=Path, help="Planilha com a lista de grupos do GED (.xlsx)"
+        "grupos", type=Path, help="Planilha com a lista de grupos do GED (.xlsx ou .xls)"
     )
-    parser.add_argument("legal_one", type=Path, help="Planilha de base do Legal One (.xlsx)")
+    parser.add_argument(
+        "legal_one", type=Path, help="Planilha de base do Legal One (.xlsx ou .xls)"
+    )
     parser.add_argument("saida", type=Path, help="Caminho da planilha de saída (.xlsx)")
     parser.add_argument(
         "--aba-grupos", default=None, help="Nome da aba da planilha de grupos"
