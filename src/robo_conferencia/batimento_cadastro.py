@@ -141,12 +141,45 @@ def encontrar_coluna(colunas: Sequence[object], termos_obrigatorios: Sequence[st
     return None
 
 
+def encontrar_coluna_com_alternativas(
+    colunas: Sequence[object], alternativas: Sequence[Sequence[str]]
+) -> Optional[object]:
+    """Como `encontrar_coluna`, mas aceita múltiplas alternativas de termos
+    para o mesmo campo: tenta a primeira alternativa (em todas as colunas);
+    se nenhuma coluna bater, tenta a próxima alternativa, e assim por diante.
+
+    Isso permite que um campo interno (ex: ``numero_cnj``) reconheça vários
+    "sinônimos" de cabeçalho (ex: planilhas de times/robôs diferentes),
+    mantendo a prioridade da alternativa mais específica/consolidada.
+    """
+    for termos_obrigatorios in alternativas:
+        coluna = encontrar_coluna(colunas, termos_obrigatorios)
+        if coluna is not None:
+            return coluna
+    return None
+
+
+# Cada campo interno mapeia para uma tupla de alternativas de termos; cada
+# alternativa é, por sua vez, uma tupla de regexes que devem casar todos
+# (mesmo formato aceito por `encontrar_coluna`). A primeira alternativa que
+# encontrar uma coluna correspondente é usada.
 COLUNAS_CADASTRO = {
-    "numero_cnj": (r"cnj",),
-    "outro_numero": (r"outro", r"numer"),
-    "cliente_principal": (r"client", r"principal"),
-    "responsavel_principal": (r"respons", r"principal"),
-    "status": (r"status",),
+    "numero_cnj": (
+        (r"cnj",),
+        # "Número do processo" (ex: planilhas do Robô Protocolo), mas sem
+        # roubar colunas de "outro número" (ex: "Outro Número do Processo").
+        (r"^(?!.*outro)", r"numero", r"processo"),
+    ),
+    "outro_numero": ((r"outro", r"numer"),),
+    "cliente_principal": (
+        (r"client", r"principal"),
+        (r"\bpartes\b",),
+    ),
+    "responsavel_principal": (
+        (r"respons", r"principal"),
+        (r"advogado", r"respons"),
+    ),
+    "status": ((r"status",),),
 }
 
 
@@ -277,6 +310,17 @@ def localizar_aba_cadastro(caminho_arquivo: Path) -> str:
         if encontrar_coluna(cabecalho, (r"cnj",)) is not None:
             return aba
 
+    # Fallback adicional: planilhas de aba única (sem nenhuma coluna "CNJ"),
+    # como o export do "Robô Protocolo", identificadas por terem uma coluna
+    # de "Número do processo".
+    for aba in xls.sheet_names:
+        try:
+            cabecalho = pd.read_excel(xls, sheet_name=aba, nrows=0).columns
+        except Exception:
+            continue
+        if encontrar_coluna(cabecalho, (r"numero", r"processo")) is not None:
+            return aba
+
     return xls.sheet_names[0]
 
 
@@ -287,8 +331,8 @@ def carregar_planilha_cadastro(caminho_arquivo: Path) -> pd.DataFrame:
     df = pd.read_excel(caminho_arquivo, sheet_name=aba, dtype=str)
 
     mapeamento: Dict[str, str] = {}
-    for nome_interno, termos in COLUNAS_CADASTRO.items():
-        coluna = encontrar_coluna(df.columns, termos)
+    for nome_interno, alternativas in COLUNAS_CADASTRO.items():
+        coluna = encontrar_coluna_com_alternativas(df.columns, alternativas)
         if coluna is not None:
             mapeamento[coluna] = nome_interno
 

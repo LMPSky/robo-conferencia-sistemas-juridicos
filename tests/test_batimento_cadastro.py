@@ -168,6 +168,61 @@ def _criar_planilha_cadastro_robo_ti(path: Path) -> None:
     wb.save(path)
 
 
+def _criar_planilha_robo_protocolo(path: Path) -> None:
+    """Planilha no formato exportado pelo "Robô Protocolo" (robô de
+    e-mail/distribuição): aba única (sem aba CADASTRO), sem coluna de
+    status, e com cabeçalhos próprios (Número do processo / Partes /
+    Advogado responsável)."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Planilha1"
+    ws.append(
+        [
+            "Processado em",
+            "Caixa monitorada",
+            "Data/Hora do e-mail",
+            "E-mail do destinatário",
+            "Número do processo",
+            "Partes",
+            "Advogado responsável",
+            "Tipo de distribuição",
+            "Assunto original",
+            "Link do e-mail",
+        ]
+    )
+    # Bate com a base (mesmo CNJ) -> CADASTRADO
+    ws.append(
+        [
+            "2026-10-09",
+            "protocolocivel@deciofreire.com.br",
+            "2026-10-08",
+            "Protocolo Civel <protocolo@deciofreire.com.br>",
+            "0010903-71.2018.5.03.0029",
+            "Re: CONFERÊNCIA E DISTRIBUIÇÃO - AGRAVO DE INSTRUMENTO - Cliente A",
+            "Dr. Fulano",
+            "Agravo de Instrumento",
+            "AGRAVO - Cliente A",
+            "https://mail.google.com/mensagem-1",
+        ]
+    )
+    # Não bate com nada -> PENDENTE
+    ws.append(
+        [
+            "2026-10-10",
+            "protocolocivel@deciofreire.com.br",
+            "2026-10-09",
+            "Protocolo Civel <protocolo@deciofreire.com.br>",
+            "0766149-51.2026.8.18.0000",
+            "Re: CONFERÊNCIA E DISTRIBUIÇÃO - AGRAVO DE INSTRUMENTO - Cliente X",
+            "Dra. Sicrana",
+            "Agravo de Instrumento",
+            "AGRAVO - Cliente X",
+            "https://mail.google.com/mensagem-2",
+        ]
+    )
+    wb.save(path)
+
+
 def _criar_export_ged(path: Path) -> None:
     df = pd.DataFrame(
         {
@@ -300,3 +355,46 @@ def test_falha_amigavel_quando_base_legal_one_vazia(tmp_path: Path):
         assert False, "Deveria ter levantado FileNotFoundError"
     except FileNotFoundError as erro:
         assert "base_legal_one" in str(erro)
+
+
+def test_planilha_robo_protocolo_e_reconhecida(tmp_path: Path):
+    """Planilha exportada pelo "Robô Protocolo" (aba única "Planilha1", sem
+    aba CADASTRO, sem coluna de status, cabeçalhos "Número do processo" /
+    "Partes" / "Advogado responsável") deve ser detectada e batida
+    corretamente contra a base do Legal One."""
+    (tmp_path / "entrada" / "base_legal_one").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "entrada" / "planilhas_cadastro").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "entrada" / "export_ged").mkdir(parents=True, exist_ok=True)
+
+    _criar_base_legal_one(tmp_path / "entrada" / "base_legal_one" / "base_legal_one.xlsx")
+    _criar_planilha_robo_protocolo(
+        tmp_path / "entrada" / "planilhas_cadastro" / "planilha robo protocolo.xlsx"
+    )
+
+    resultado = executar_batimento(tmp_path)
+
+    assert resultado.planilhas_processadas == 1
+    assert resultado.total_verificado == 2
+    assert resultado.total_cadastrado == 1
+    assert resultado.total_pendente == 1
+    assert resultado.total_sem_numero == 0
+
+    df_detalhe = resultado.df_detalhe
+    linhas = {
+        linha["Número buscado"]: linha for _, linha in df_detalhe.iterrows()
+    }
+
+    linha_cadastrada = linhas["0010903-71.2018.5.03.0029"]
+    assert linha_cadastrada["Status"] == STATUS_CADASTRADO
+    assert linha_cadastrada["Cliente principal"] == (
+        "Re: CONFERÊNCIA E DISTRIBUIÇÃO - AGRAVO DE INSTRUMENTO - Cliente A"
+    )
+    assert linha_cadastrada["Responsável principal"] == "Dr. Fulano"
+
+    linha_pendente = linhas["0766149-51.2026.8.18.0000"]
+    assert linha_pendente["Status"] == STATUS_PENDENTE
+    assert linha_pendente["Cliente principal"] == (
+        "Re: CONFERÊNCIA E DISTRIBUIÇÃO - AGRAVO DE INSTRUMENTO - Cliente X"
+    )
+    assert linha_pendente["Responsável principal"] == "Dra. Sicrana"
+
