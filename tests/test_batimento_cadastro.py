@@ -74,6 +74,62 @@ def _criar_base_legal_one(path: Path) -> None:
     wb.save(path)
 
 
+def _criar_base_legal_one_sem_titulo(path: Path) -> None:
+    """Export novo do Legal One SEM linha de título solta: o cabeçalho real
+    já está na linha 1 (ex: "Base Legal One até 30-10-2026.xlsx")."""
+    wb = Workbook()
+    ws = wb.active
+    ws.append(
+        [
+            "Pasta",
+            "Tipo processo/recurso/incidente",
+            "Data do cadastro",
+            "Número de CNJ",
+            "Outro número",
+            "Número antigo",
+            "Escritório responsável/área",
+            "Responsável principal (Coordenador)",
+            "Cliente principal",
+            "Grupo",
+            "Tipo",
+            "Status",
+        ]
+    )
+    ws.append(
+        [
+            "Proc - 0070111/001",
+            "Processo",
+            "01/01/2026",
+            "0010903-71.2018.5.03.0029",
+            "",
+            "",
+            "Escritório X",
+            "Dr. Fulano",
+            "Cliente A",
+            "Grupo 1",
+            "Cível",
+            "Ativo",
+        ]
+    )
+    ws.append(
+        [
+            "Proc - 0070222/001",
+            "Processo",
+            "02/01/2026",
+            "",
+            "3344/2026",
+            "",
+            "Escritório X",
+            "Dr. Fulano",
+            "Cliente B",
+            "Grupo 1",
+            "Cível",
+            "Ativo",
+        ]
+    )
+    wb.save(path)
+
+
 def _criar_planilha_cadastro_advogado(path: Path) -> None:
     """Planilha com cabeçalhos "padrão" e aba chamada CADASTRO."""
     wb = Workbook()
@@ -500,4 +556,62 @@ def test_colunas_remetente_e_data_email_ficam_vazias_sem_erro_no_formato_antigo(
     assert (linhas_formato_antigo["Remetente do e-mail"] == "").all()
     assert (linhas_formato_antigo["Data de envio do e-mail"] == "").all()
     assert (linhas_formato_antigo["Data do processo"] == "").all()
+
+
+def test_base_legal_one_sem_linha_de_titulo_e_reconhecida(tmp_path: Path):
+    """Export novo do Legal One cujo cabeçalho já está na linha 1 (sem a
+    linha de título solto "usuario@empresa.com.br - ..." antes) deve ter o
+    cabeçalho corretamente reconhecido, em vez de descartar a linha 1 cegamente
+    com `skiprows=1` (o que faria a primeira linha de dados virar cabeçalho e
+    nenhuma coluna-chave ser reconhecida, deixando a base "vazia" e todo
+    processo aparecendo como PENDENTE)."""
+    (tmp_path / "entrada" / "base_legal_one").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "entrada" / "planilhas_cadastro").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "entrada" / "export_ged").mkdir(parents=True, exist_ok=True)
+
+    _criar_base_legal_one_sem_titulo(
+        tmp_path / "entrada" / "base_legal_one" / "Base Legal One ate 30-10-2026.xlsx"
+    )
+    _criar_planilha_robo_protocolo(
+        tmp_path / "entrada" / "planilhas_cadastro" / "planilha robo protocolo.xlsx"
+    )
+
+    resultado = executar_batimento(tmp_path)
+
+    assert resultado.total_verificado == 2
+    # As duas linhas da planilha de cadastro batem com a base (mesmo CNJ e
+    # mesmo "Outro número" normalizado-para-dígitos), confirmando que o
+    # cabeçalho da base foi corretamente reconhecido na linha 1.
+    df_detalhe = resultado.df_detalhe
+    linhas = {
+        linha["Número buscado"]: linha for _, linha in df_detalhe.iterrows()
+    }
+    assert linhas["0010903-71.2018.5.03.0029"]["Status"] == STATUS_CADASTRADO
+
+
+def test_base_legal_one_mista_com_e_sem_titulo_sao_reconhecidas_individualmente(tmp_path: Path):
+    """Quando há múltiplos arquivos em `entrada/base_legal_one`, a detecção
+    de linha de título solto deve ser feita por arquivo individualmente: um
+    pode ter título solto e outro não."""
+    (tmp_path / "entrada" / "base_legal_one").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "entrada" / "planilhas_cadastro").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "entrada" / "export_ged").mkdir(parents=True, exist_ok=True)
+
+    _criar_base_legal_one(tmp_path / "entrada" / "base_legal_one" / "base_legal_one_antiga.xlsx")
+    _criar_base_legal_one_sem_titulo(
+        tmp_path / "entrada" / "base_legal_one" / "Base Legal One ate 30-10-2026.xlsx"
+    )
+    _criar_planilha_robo_protocolo(
+        tmp_path / "entrada" / "planilhas_cadastro" / "planilha robo protocolo.xlsx"
+    )
+
+    resultado = executar_batimento(tmp_path)
+
+    df_detalhe = resultado.df_detalhe
+    linhas = {
+        linha["Número buscado"]: linha for _, linha in df_detalhe.iterrows()
+    }
+    assert linhas["0010903-71.2018.5.03.0029"]["Status"] == STATUS_CADASTRADO
+    assert linhas["0766149-51.2026.8.18.0000"]["Status"] == STATUS_PENDENTE
+
 

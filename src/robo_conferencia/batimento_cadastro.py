@@ -263,12 +263,68 @@ def _listar_arquivos_excel(pasta: Path, extensoes: Sequence[str]) -> List[Path]:
 # Base do Legal One
 # --------------------------------------------------------------------------
 
+def _colunas_chave_legal_one(df: pd.DataFrame) -> Dict[str, Optional[object]]:
+    """Localiza por heurística de cabeçalho as colunas-chave da base do
+    Legal One (pasta, CNJ, número antigo, outro número).
+
+    Compartilhado entre `_ler_base_legal_one_arquivo` (para detectar se a
+    primeira linha do arquivo é cabeçalho real ou um título solto a ser
+    descartado) e `construir_chaves_conhecidas`.
+    """
+    return {
+        "pasta": encontrar_coluna(df.columns, (r"pasta",)),
+        "cnj": encontrar_coluna(df.columns, (r"cnj",)),
+        "numero_antigo": encontrar_coluna(df.columns, (r"numero antigo|numero.?antigo",))
+        or encontrar_coluna(df.columns, (r"antigo",)),
+        "outro_numero": encontrar_coluna(df.columns, (r"outro", r"numer")),
+    }
+
+
+def _ler_base_legal_one_arquivo(arquivo: Path) -> pd.DataFrame:
+    """Lê um único arquivo de export da base do Legal One, detectando de
+    forma robusta se a primeira linha é o cabeçalho real ou um título solto
+    (ex: 'usuario@empresa.com.br - 01/01/2026') que deve ser descartado.
+
+    Tenta ler com o cabeçalho já na linha 1 (sem `skiprows`) e conta quantas
+    colunas-chave esperadas (Pasta/Número de CNJ/Número antigo/Outro número)
+    são reconhecidas; tenta também pulando a primeira linha (`skiprows=1`,
+    assumindo título solto) e faz a mesma contagem. Usa o resultado que
+    reconhecer mais colunas-chave. Se nenhuma das duas tentativas reconhecer
+    nenhuma coluna-chave, levanta um erro claro citando o arquivo.
+    """
+    tentativas: List[Tuple[int, pd.DataFrame]] = []
+    for skiprows in (0, 1):
+        try:
+            df = pd.read_excel(arquivo, skiprows=skiprows, dtype=str)
+        except Exception:
+            continue
+        colunas_chave = _colunas_chave_legal_one(df)
+        qtd_reconhecidas = sum(1 for coluna in colunas_chave.values() if coluna is not None)
+        tentativas.append((qtd_reconhecidas, df))
+
+    if not tentativas:
+        raise ValueError(
+            f"Não foi possível ler o arquivo de base do Legal One '{arquivo.name}'."
+        )
+
+    melhor_qtd, melhor_df = max(tentativas, key=lambda item: item[0])
+    if melhor_qtd == 0:
+        raise ValueError(
+            "Não foi possível localizar o cabeçalho esperado (Pasta / Número "
+            "de CNJ / Número antigo / Outro número) no arquivo de base do "
+            f"Legal One '{arquivo.name}'. Verifique se o arquivo está no "
+            "formato correto."
+        )
+    return melhor_df
+
+
 def carregar_base_legal_one(pasta_base: Path) -> pd.DataFrame:
     """Carrega o(s) export(s) da base do Legal One.
 
-    A primeira linha do arquivo é um título solto (ex: 'usuario@empresa.com.br
-    - 01/01/2026') e deve ser ignorada; a segunda linha tem os cabeçalhos
-    reais, por isso usamos `skiprows=1` no `read_excel`.
+    Alguns exports têm uma linha de título solto antes do cabeçalho real
+    (ex: 'usuario@empresa.com.br - 01/01/2026'); outros já têm o cabeçalho
+    na própria primeira linha. `_ler_base_legal_one_arquivo` detecta isso
+    automaticamente, por arquivo, reconhecendo as colunas-chave esperadas.
     """
     arquivos = _listar_arquivos_excel(pasta_base, (".xlsx", ".xls"))
     if not arquivos:
@@ -278,14 +334,7 @@ def carregar_base_legal_one(pasta_base: Path) -> pd.DataFrame:
             "antes de rodar o robô."
         )
 
-    dataframes = []
-    for arquivo in arquivos:
-        try:
-            df = pd.read_excel(arquivo, skiprows=1, dtype=str)
-        except Exception:
-            # Fallback: talvez não haja a linha de título solta neste export.
-            df = pd.read_excel(arquivo, dtype=str)
-        dataframes.append(df)
+    dataframes = [_ler_base_legal_one_arquivo(arquivo) for arquivo in arquivos]
 
     return pd.concat(dataframes, ignore_index=True, sort=False)
 
@@ -295,11 +344,11 @@ def construir_chaves_conhecidas(df_legal_one: pd.DataFrame) -> Set[str]:
     a partir das colunas Número de CNJ, Número antigo, Outro número e Pasta."""
     chaves: Set[str] = set()
 
-    coluna_pasta = encontrar_coluna(df_legal_one.columns, (r"pasta",))
-    coluna_cnj = encontrar_coluna(df_legal_one.columns, (r"cnj",))
-    coluna_numero_antigo = encontrar_coluna(df_legal_one.columns, (r"numero antigo|numero.?antigo",)) \
-        or encontrar_coluna(df_legal_one.columns, (r"antigo",))
-    coluna_outro_numero = encontrar_coluna(df_legal_one.columns, (r"outro", r"numer"))
+    colunas_chave = _colunas_chave_legal_one(df_legal_one)
+    coluna_cnj = colunas_chave["cnj"]
+    coluna_numero_antigo = colunas_chave["numero_antigo"]
+    coluna_outro_numero = colunas_chave["outro_numero"]
+    coluna_pasta = colunas_chave["pasta"]
 
     for coluna, eh_pasta in (
         (coluna_cnj, False),
