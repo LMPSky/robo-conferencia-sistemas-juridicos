@@ -180,6 +180,25 @@ COLUNAS_CADASTRO = {
         (r"advogado", r"respons"),
     ),
     "status": ((r"status",),),
+    # Remetente/caixa relacionada ao e-mail que originou o registro (quando
+    # disponível na planilha de origem, ex: planilhas do Robô Protocolo).
+    # Nem sempre há uma coluna de remetente explícita, então caímos para a
+    # caixa monitorada e, por último, o e-mail do destinatário como melhor
+    # aproximação disponível.
+    "remetente_email": (
+        (r"remetente",),
+        (r"de quem enviou",),
+        (r"caixa", r"monitorada"),
+        (r"e-?mail", r"destinatari"),
+    ),
+    # Data de envio do e-mail que originou o registro (não confundir com a
+    # coluna "Data de envio" existente, que vem do export_ged e representa a
+    # data de anexação/geração no GED).
+    "data_envio_email": (
+        (r"data", r"hora", r"e-?mail"),
+        (r"data", r"envio", r"e-?mail"),
+        (r"data", r"e-?mail"),
+    ),
 }
 
 
@@ -463,6 +482,26 @@ def determinar_numero_busca(linha: pd.Series) -> Optional[str]:
     return None
 
 
+def valor_texto_ou_vazio(valor: object) -> str:
+    """Converte um valor opcional de uma célula para texto, tratando ausência
+    como string vazia.
+
+    Necessário porque `DataFrame.iterrows()` pode converter um `None` (usado
+    para preencher colunas internas ausentes na planilha de origem, ex:
+    `remetente_email`/`data_envio_email` quando a planilha não tem essa
+    informação) em `NaN` (float) ao montar a `Series` da linha, e `NaN` é
+    "truthy" em Python, então um simples `valor or ""` não seria suficiente.
+    """
+    if valor is None:
+        return ""
+    if isinstance(valor, float) and pd.isna(valor):
+        return ""
+    texto = str(valor).strip()
+    if texto.lower() == "nan":
+        return ""
+    return texto
+
+
 def verificar_status(numero_busca: Optional[str], chaves_conhecidas: Set[str]) -> str:
     if numero_busca is None:
         return STATUS_SEM_NUMERO
@@ -505,11 +544,13 @@ def processar_planilhas_cadastro(
                 {
                     "Arquivo de origem": arquivo.name,
                     "Tipo": tipo,
-                    "Cliente principal": linha.get("cliente_principal") or "",
-                    "Responsável principal": linha.get("responsavel_principal") or "",
-                    "Status planilha": linha.get("status") or "",
-                    "Número CNJ": linha.get("numero_cnj") or "",
-                    "Outro número": linha.get("outro_numero") or "",
+                    "Cliente principal": valor_texto_ou_vazio(linha.get("cliente_principal")),
+                    "Responsável principal": valor_texto_ou_vazio(linha.get("responsavel_principal")),
+                    "Remetente do e-mail": valor_texto_ou_vazio(linha.get("remetente_email")),
+                    "Data de envio do e-mail": valor_texto_ou_vazio(linha.get("data_envio_email")),
+                    "Status planilha": valor_texto_ou_vazio(linha.get("status")),
+                    "Número CNJ": valor_texto_ou_vazio(linha.get("numero_cnj")),
+                    "Outro número": valor_texto_ou_vazio(linha.get("outro_numero")),
                     "Número buscado": numero_busca or "",
                     "Status": status,
                     "Data de envio": data_envio,
@@ -612,6 +653,8 @@ def gerar_relatorio(
             "Tipo",
             "Responsável principal",
             "Cliente principal",
+            "Remetente do e-mail",
+            "Data de envio do e-mail",
             "Número buscado",
             "Status",
             "Observação",
