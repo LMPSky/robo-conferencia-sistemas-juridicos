@@ -355,11 +355,37 @@ def carregar_planilha_cadastro(caminho_arquivo: Path) -> pd.DataFrame:
         if coluna is not None:
             mapeamento[coluna] = nome_interno
 
+    # A coluna de data de envio do e-mail (ex: "Data/Hora do e-mail" no
+    # formato Robô Protocolo) é um valor datetime real no Excel. Forçar
+    # `dtype=str` na leitura acima transformaria essa data em texto ISO cru
+    # (ex: "2026-10-08 00:00:00"), então relemos apenas essa coluna sem
+    # forçar o tipo e convertemos explicitamente para datetime, preservando
+    # as demais colunas (numero_cnj, outro_numero, cliente_principal,
+    # responsavel_principal, status, remetente_email) como texto.
+    coluna_data_envio_email = next(
+        (origem for origem, destino in mapeamento.items() if destino == "data_envio_email"),
+        None,
+    )
+    serie_data_envio_email = None
+    if coluna_data_envio_email is not None:
+        try:
+            df_data = pd.read_excel(
+                caminho_arquivo, sheet_name=aba, usecols=[coluna_data_envio_email]
+            )
+            serie_data_envio_email = pd.to_datetime(
+                df_data[coluna_data_envio_email], errors="coerce"
+            )
+        except Exception:
+            serie_data_envio_email = None
+
     df = df.rename(columns=mapeamento)
 
     for nome_interno in COLUNAS_CADASTRO:
         if nome_interno not in df.columns:
             df[nome_interno] = None
+
+    if serie_data_envio_email is not None:
+        df["data_envio_email"] = serie_data_envio_email.values
 
     # Ignora linhas totalmente vazias nas colunas-chave.
     colunas_chave = ["numero_cnj", "outro_numero", "cliente_principal", "responsavel_principal"]
@@ -502,6 +528,30 @@ def valor_texto_ou_vazio(valor: object) -> str:
     return texto
 
 
+def formatar_data_envio_email(valor: object) -> str:
+    """Formata a data de envio do e-mail como "dd/mm/AAAA" (ou
+    "dd/mm/AAAA HH:MM" quando houver um horário diferente de meia-noite
+    genuinamente presente na planilha de origem).
+
+    `valor` normalmente já é um `Timestamp`/`datetime` (ver
+    `carregar_planilha_cadastro`, que preserva o tipo datetime nativo do
+    Excel para essa coluna). Se a conversão falhar ou o valor vier vazio,
+    retorna string vazia, sem erro.
+    """
+    if valor is None:
+        return ""
+    if isinstance(valor, float) and pd.isna(valor):
+        return ""
+
+    data = valor if isinstance(valor, (pd.Timestamp, datetime)) else pd.to_datetime(valor, errors="coerce")
+    if data is None or pd.isna(data):
+        return ""
+
+    if data.hour == 0 and data.minute == 0 and data.second == 0:
+        return data.strftime("%d/%m/%Y")
+    return data.strftime("%d/%m/%Y %H:%M")
+
+
 def verificar_status(numero_busca: Optional[str], chaves_conhecidas: Set[str]) -> str:
     if numero_busca is None:
         return STATUS_SEM_NUMERO
@@ -547,7 +597,7 @@ def processar_planilhas_cadastro(
                     "Cliente principal": valor_texto_ou_vazio(linha.get("cliente_principal")),
                     "Responsável principal": valor_texto_ou_vazio(linha.get("responsavel_principal")),
                     "Remetente do e-mail": valor_texto_ou_vazio(linha.get("remetente_email")),
-                    "Data de envio do e-mail": valor_texto_ou_vazio(linha.get("data_envio_email")),
+                    "Data de envio do e-mail": formatar_data_envio_email(linha.get("data_envio_email")),
                     "Status planilha": valor_texto_ou_vazio(linha.get("status")),
                     "Número CNJ": valor_texto_ou_vazio(linha.get("numero_cnj")),
                     "Outro número": valor_texto_ou_vazio(linha.get("outro_numero")),
