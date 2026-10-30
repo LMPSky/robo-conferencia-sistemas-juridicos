@@ -169,6 +169,11 @@ COLUNAS_CADASTRO = {
         # "Número do processo" (ex: planilhas do Robô Protocolo), mas sem
         # roubar colunas de "outro número" (ex: "Outro Número do Processo").
         (r"^(?!.*outro)", r"numero", r"processo"),
+        # Fallback mais genérico (prioridade mais baixa): planilhas de 2
+        # colunas (ex: "Processos - Estratégico.xlsx"/"Processos -
+        # Tributário.xlsx") com cabeçalho simplesmente "Processos:", sem a
+        # palavra "número" junto. Mesma proteção contra "outro número".
+        (r"^(?!.*outro)", r"\bprocessos?\b"),
     ),
     "outro_numero": ((r"outro", r"numer"),),
     "cliente_principal": (
@@ -198,6 +203,12 @@ COLUNAS_CADASTRO = {
         (r"data", r"hora", r"e-?mail"),
         (r"data", r"envio", r"e-?mail"),
         (r"data", r"e-?mail"),
+    ),
+    # Data do processo/distribuição (ex: planilhas de 2 colunas "Processos:"
+    # / "Data:"). Termo genérico demais para arriscar confundir com a data
+    # do e-mail, por isso exige que o cabeçalho não mencione "e-mail"/"email".
+    "data_processo": (
+        (r"^(?!.*e-?mail)", r"\bdata\b"),
     ),
 }
 
@@ -330,17 +341,34 @@ def localizar_aba_cadastro(caminho_arquivo: Path) -> str:
             return aba
 
     # Fallback adicional: planilhas de aba única (sem nenhuma coluna "CNJ"),
-    # como o export do "Robô Protocolo", identificadas por terem uma coluna
-    # de "Número do processo".
+    # como o export do "Robô Protocolo" (coluna "Número do processo") ou
+    # planilhas simples de 2 colunas (coluna "Processos:"), identificadas
+    # reaproveitando as mesmas alternativas de `numero_cnj`.
     for aba in xls.sheet_names:
         try:
             cabecalho = pd.read_excel(xls, sheet_name=aba, nrows=0).columns
         except Exception:
             continue
-        if encontrar_coluna(cabecalho, (r"numero", r"processo")) is not None:
+        if encontrar_coluna_com_alternativas(cabecalho, COLUNAS_CADASTRO["numero_cnj"]) is not None:
             return aba
 
     return xls.sheet_names[0]
+
+
+def _ler_coluna_como_datetime(
+    caminho_arquivo: Path, aba: str, coluna: Optional[str]
+) -> Optional[pd.Series]:
+    """Relê uma única coluna da planilha sem forçar `dtype=str`, convertendo
+    para datetime. Usado para colunas de data (`data_envio_email`,
+    `data_processo`) que, se lidas como texto, perderiam a formatação
+    original (ex: viram "2026-10-08 00:00:00" em vez de uma data real)."""
+    if coluna is None:
+        return None
+    try:
+        df_coluna = pd.read_excel(caminho_arquivo, sheet_name=aba, usecols=[coluna])
+        return pd.to_datetime(df_coluna[coluna], errors="coerce")
+    except Exception:
+        return None
 
 
 def carregar_planilha_cadastro(caminho_arquivo: Path) -> pd.DataFrame:
@@ -355,28 +383,23 @@ def carregar_planilha_cadastro(caminho_arquivo: Path) -> pd.DataFrame:
         if coluna is not None:
             mapeamento[coluna] = nome_interno
 
-    # A coluna de data de envio do e-mail (ex: "Data/Hora do e-mail" no
-    # formato Robô Protocolo) é um valor datetime real no Excel. Forçar
-    # `dtype=str` na leitura acima transformaria essa data em texto ISO cru
-    # (ex: "2026-10-08 00:00:00"), então relemos apenas essa coluna sem
-    # forçar o tipo e convertemos explicitamente para datetime, preservando
-    # as demais colunas (numero_cnj, outro_numero, cliente_principal,
+    # As colunas de data (ex: "Data/Hora do e-mail" no formato Robô
+    # Protocolo, ou "Data:" nas planilhas simples de 2 colunas) são valores
+    # datetime reais no Excel. Forçar `dtype=str` na leitura acima
+    # transformaria essas datas em texto ISO cru (ex: "2026-10-08
+    # 00:00:00"), então relemos cada uma delas sem forçar o tipo e
+    # convertemos explicitamente para datetime, preservando as demais
+    # colunas (numero_cnj, outro_numero, cliente_principal,
     # responsavel_principal, status, remetente_email) como texto.
-    coluna_data_envio_email = next(
-        (origem for origem, destino in mapeamento.items() if destino == "data_envio_email"),
-        None,
-    )
-    serie_data_envio_email = None
-    if coluna_data_envio_email is not None:
-        try:
-            df_data = pd.read_excel(
-                caminho_arquivo, sheet_name=aba, usecols=[coluna_data_envio_email]
-            )
-            serie_data_envio_email = pd.to_datetime(
-                df_data[coluna_data_envio_email], errors="coerce"
-            )
-        except Exception:
-            serie_data_envio_email = None
+    series_por_coluna_data: Dict[str, pd.Series] = {}
+    for nome_interno_data in ("data_envio_email", "data_processo"):
+        coluna_origem = next(
+            (origem for origem, destino in mapeamento.items() if destino == nome_interno_data),
+            None,
+        )
+        serie = _ler_coluna_como_datetime(caminho_arquivo, aba, coluna_origem)
+        if serie is not None:
+            series_por_coluna_data[nome_interno_data] = serie
 
     df = df.rename(columns=mapeamento)
 
@@ -384,8 +407,8 @@ def carregar_planilha_cadastro(caminho_arquivo: Path) -> pd.DataFrame:
         if nome_interno not in df.columns:
             df[nome_interno] = None
 
-    if serie_data_envio_email is not None:
-        df["data_envio_email"] = serie_data_envio_email.values
+    for nome_interno_data, serie in series_por_coluna_data.items():
+        df[nome_interno_data] = serie.values
 
     # Ignora linhas totalmente vazias nas colunas-chave.
     colunas_chave = ["numero_cnj", "outro_numero", "cliente_principal", "responsavel_principal"]
@@ -528,14 +551,14 @@ def valor_texto_ou_vazio(valor: object) -> str:
     return texto
 
 
-def formatar_data_envio_email(valor: object) -> str:
-    """Formata a data de envio do e-mail como "dd/mm/AAAA" (ou
-    "dd/mm/AAAA HH:MM" quando houver um horário diferente de meia-noite
-    genuinamente presente na planilha de origem).
+def formatar_data(valor: object) -> str:
+    """Formata uma data (ex: data de envio do e-mail, data do processo)
+    como "dd/mm/AAAA" (ou "dd/mm/AAAA HH:MM" quando houver um horário
+    diferente de meia-noite genuinamente presente na planilha de origem).
 
     `valor` normalmente já é um `Timestamp`/`datetime` (ver
     `carregar_planilha_cadastro`, que preserva o tipo datetime nativo do
-    Excel para essa coluna). Se a conversão falhar ou o valor vier vazio,
+    Excel para essas colunas). Se a conversão falhar ou o valor vier vazio,
     retorna string vazia, sem erro.
     """
     if valor is None:
@@ -597,7 +620,8 @@ def processar_planilhas_cadastro(
                     "Cliente principal": valor_texto_ou_vazio(linha.get("cliente_principal")),
                     "Responsável principal": valor_texto_ou_vazio(linha.get("responsavel_principal")),
                     "Remetente do e-mail": valor_texto_ou_vazio(linha.get("remetente_email")),
-                    "Data de envio do e-mail": formatar_data_envio_email(linha.get("data_envio_email")),
+                    "Data de envio do e-mail": formatar_data(linha.get("data_envio_email")),
+                    "Data do processo": formatar_data(linha.get("data_processo")),
                     "Status planilha": valor_texto_ou_vazio(linha.get("status")),
                     "Número CNJ": valor_texto_ou_vazio(linha.get("numero_cnj")),
                     "Outro número": valor_texto_ou_vazio(linha.get("outro_numero")),
@@ -705,6 +729,7 @@ def gerar_relatorio(
             "Cliente principal",
             "Remetente do e-mail",
             "Data de envio do e-mail",
+            "Data do processo",
             "Número buscado",
             "Status",
             "Observação",

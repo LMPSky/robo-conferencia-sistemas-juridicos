@@ -226,6 +226,23 @@ def _criar_planilha_robo_protocolo(path: Path) -> None:
     wb.save(path)
 
 
+def _criar_planilha_simples_dois_colunas(path: Path) -> None:
+    """Planilha simples de 2 colunas ("Processos:"/"Data:"), com aba de
+    nome genérico/numérico (não "CADASTRO"), como os exports reais
+    "Processos - Estratégico.xlsx"/"Processos - Tributário.xlsx"."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "90809908"
+    ws.append(["Processos:", "Data:"])
+    # Bate com a base (mesmo CNJ, só dígitos, com espaço em branco antes) ->
+    # CADASTRADO.
+    ws.append([" 00109037120185030029", datetime(2026, 1, 15)])
+    # Não batem com nada -> PENDENTE.
+    ws.append(["00000000120260000001", datetime(2026, 2, 20)])
+    ws.append(["00000000220260000002", datetime(2026, 3, 5)])
+    wb.save(path)
+
+
 def _criar_export_ged(path: Path) -> None:
     df = pd.DataFrame(
         {
@@ -334,6 +351,7 @@ def test_relatorio_gerado_tem_tres_abas_com_conteudo_esperado(tmp_path: Path):
         "Cliente principal",
         "Remetente do e-mail",
         "Data de envio do e-mail",
+        "Data do processo",
         "Número buscado",
         "Status",
         "Observação",
@@ -397,6 +415,9 @@ def test_planilha_robo_protocolo_e_reconhecida(tmp_path: Path):
     assert linha_cadastrada["Responsável principal"] == "Dr. Fulano"
     assert linha_cadastrada["Remetente do e-mail"] == "protocolocivel@deciofreire.com.br"
     assert linha_cadastrada["Data de envio do e-mail"] == "08/10/2026"
+    # Formato Robô Protocolo não tem coluna de "data do processo" própria
+    # (só data do e-mail); deve ficar vazia, sem erro.
+    assert linha_cadastrada["Data do processo"] == ""
 
     linha_pendente = linhas["0766149-51.2026.8.18.0000"]
     assert linha_pendente["Status"] == STATUS_PENDENTE
@@ -408,6 +429,54 @@ def test_planilha_robo_protocolo_e_reconhecida(tmp_path: Path):
     # Hora diferente de meia-noite genuinamente presente na planilha de
     # origem deve ser preservada no formato "dd/mm/AAAA HH:MM".
     assert linha_pendente["Data de envio do e-mail"] == "09/10/2026 14:30"
+    assert linha_pendente["Data do processo"] == ""
+
+
+def test_planilha_simples_processos_data_e_reconhecida(tmp_path: Path):
+    """Planilha simples de 2 colunas ("Processos:"/"Data:"), com aba de nome
+    genérico/numérico (não "CADASTRO" nem nada parecido), como os exports
+    reais "Processos - Estratégico.xlsx"/"Processos - Tributário.xlsx",
+    deve ser detectada e batida corretamente contra a base do Legal One,
+    extraindo também a "Data do processo" formatada."""
+    (tmp_path / "entrada" / "base_legal_one").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "entrada" / "planilhas_cadastro").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "entrada" / "export_ged").mkdir(parents=True, exist_ok=True)
+
+    _criar_base_legal_one(tmp_path / "entrada" / "base_legal_one" / "base_legal_one.xlsx")
+    _criar_planilha_simples_dois_colunas(
+        tmp_path / "entrada" / "planilhas_cadastro" / "processos estrategico.xlsx"
+    )
+
+    resultado = executar_batimento(tmp_path)
+
+    assert resultado.planilhas_processadas == 1
+    assert resultado.total_verificado == 3
+    assert resultado.total_cadastrado == 1
+    assert resultado.total_pendente == 2
+    assert resultado.total_sem_numero == 0
+
+    df_detalhe = resultado.df_detalhe
+    linhas = {
+        linha["Número buscado"]: linha for _, linha in df_detalhe.iterrows()
+    }
+
+    # Número com espaço em branco antes deve ser extraído/normalizado
+    # corretamente (sem o espaço) e bater com a base do Legal One.
+    linha_cadastrada = linhas["00109037120185030029"]
+    assert linha_cadastrada["Status"] == STATUS_CADASTRADO
+    assert linha_cadastrada["Data do processo"] == "15/01/2026"
+    # Esse formato não tem coluna de remetente/data de e-mail: continua
+    # vazio, sem erro.
+    assert linha_cadastrada["Remetente do e-mail"] == ""
+    assert linha_cadastrada["Data de envio do e-mail"] == ""
+
+    linha_pendente_1 = linhas["00000000120260000001"]
+    assert linha_pendente_1["Status"] == STATUS_PENDENTE
+    assert linha_pendente_1["Data do processo"] == "20/02/2026"
+
+    linha_pendente_2 = linhas["00000000220260000002"]
+    assert linha_pendente_2["Status"] == STATUS_PENDENTE
+    assert linha_pendente_2["Data do processo"] == "05/03/2026"
 
 
 def test_colunas_remetente_e_data_email_ficam_vazias_sem_erro_no_formato_antigo(tmp_path: Path):
@@ -421,6 +490,7 @@ def test_colunas_remetente_e_data_email_ficam_vazias_sem_erro_no_formato_antigo(
     df_detalhe = resultado.df_detalhe
     assert "Remetente do e-mail" in df_detalhe.columns
     assert "Data de envio do e-mail" in df_detalhe.columns
+    assert "Data do processo" in df_detalhe.columns
 
     linhas_formato_antigo = df_detalhe[
         df_detalhe["Arquivo de origem"].isin(
@@ -429,4 +499,5 @@ def test_colunas_remetente_e_data_email_ficam_vazias_sem_erro_no_formato_antigo(
     ]
     assert (linhas_formato_antigo["Remetente do e-mail"] == "").all()
     assert (linhas_formato_antigo["Data de envio do e-mail"] == "").all()
+    assert (linhas_formato_antigo["Data do processo"] == "").all()
 
