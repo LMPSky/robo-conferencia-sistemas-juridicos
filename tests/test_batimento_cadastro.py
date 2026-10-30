@@ -329,6 +329,8 @@ def test_relatorio_gerado_tem_tres_abas_com_conteudo_esperado(tmp_path: Path):
         "Tipo",
         "Responsável principal",
         "Cliente principal",
+        "Remetente do e-mail",
+        "Data de envio do e-mail",
         "Número buscado",
         "Status",
         "Observação",
@@ -390,6 +392,8 @@ def test_planilha_robo_protocolo_e_reconhecida(tmp_path: Path):
         "Re: CONFERÊNCIA E DISTRIBUIÇÃO - AGRAVO DE INSTRUMENTO - Cliente A"
     )
     assert linha_cadastrada["Responsável principal"] == "Dr. Fulano"
+    assert linha_cadastrada["Remetente do e-mail"] == "protocolocivel@deciofreire.com.br"
+    assert linha_cadastrada["Data de envio do e-mail"] == "2026-10-08"
 
     linha_pendente = linhas["0766149-51.2026.8.18.0000"]
     assert linha_pendente["Status"] == STATUS_PENDENTE
@@ -397,4 +401,27 @@ def test_planilha_robo_protocolo_e_reconhecida(tmp_path: Path):
         "Re: CONFERÊNCIA E DISTRIBUIÇÃO - AGRAVO DE INSTRUMENTO - Cliente X"
     )
     assert linha_pendente["Responsável principal"] == "Dra. Sicrana"
+    assert linha_pendente["Remetente do e-mail"] == "protocolocivel@deciofreire.com.br"
+    assert linha_pendente["Data de envio do e-mail"] == "2026-10-09"
+
+
+def test_colunas_remetente_e_data_email_ficam_vazias_sem_erro_no_formato_antigo(tmp_path: Path):
+    """Planilhas no formato "Planilha de Cadastro - <tipo>" (advogado/robô TI)
+    não têm nenhuma coluna de remetente/data de e-mail; as novas colunas
+    devem simplesmente ficar vazias, sem erro."""
+    _montar_fixtures(tmp_path)
+
+    resultado = executar_batimento(tmp_path)
+
+    df_detalhe = resultado.df_detalhe
+    assert "Remetente do e-mail" in df_detalhe.columns
+    assert "Data de envio do e-mail" in df_detalhe.columns
+
+    linhas_formato_antigo = df_detalhe[
+        df_detalhe["Arquivo de origem"].isin(
+            ["planilha cadastro advogado.xlsx", "planilha cadastro robo ti.xlsx"]
+        )
+    ]
+    assert (linhas_formato_antigo["Remetente do e-mail"] == "").all()
+    assert (linhas_formato_antigo["Data de envio do e-mail"] == "").all()
 
