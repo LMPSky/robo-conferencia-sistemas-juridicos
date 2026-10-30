@@ -52,6 +52,9 @@ class ResultadoBatimento:
 
 
 def _carregar_planilha(caminho: Path, aba: Optional[str] = None) -> Worksheet:
+    if caminho.suffix.lower() == ".xls":
+        return _carregar_planilha_xls(caminho, aba)
+
     wb = load_workbook(caminho, data_only=True, read_only=True)
     if aba:
         if aba not in wb.sheetnames:
@@ -66,6 +69,37 @@ def _carregar_planilha(caminho: Path, aba: Optional[str] = None) -> Worksheet:
         if ws.max_row and ws.max_row > 1:
             return ws
     return wb[wb.sheetnames[0]]
+
+
+def _carregar_planilha_xls(caminho: Path, aba: Optional[str] = None) -> Worksheet:
+    """Lê um arquivo .xls (formato antigo, não suportado pelo openpyxl) via
+    pandas/xlrd e devolve uma Worksheet openpyxl equivalente em memória, para
+    que o restante do código possa tratar .xls e .xlsx da mesma forma."""
+    import pandas as pd
+
+    xls = pd.ExcelFile(caminho, engine="xlrd")
+    if aba and aba not in xls.sheet_names:
+        raise ValueError(
+            f"A aba '{aba}' não existe em {caminho.name}. "
+            f"Abas disponíveis: {', '.join(xls.sheet_names)}"
+        )
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    escolhida: Optional[Worksheet] = None
+    for nome in xls.sheet_names:
+        if aba and nome != aba:
+            continue
+        df = xls.parse(nome, header=None)
+        ws = wb.create_sheet(title=nome)
+        for linha in df.itertuples(index=False, name=None):
+            ws.append([None if pd.isna(valor) else valor for valor in linha])
+        if escolhida is None and (aba == nome or (not aba and ws.max_row and ws.max_row > 1)):
+            escolhida = ws
+
+    if escolhida is None:
+        escolhida = wb[xls.sheet_names[0] if not aba else aba]
+    return escolhida
 
 
 def _resolver_indice_coluna(
@@ -268,8 +302,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "publicações, destacando em verde os CNJs encontrados na base."
         )
     )
-    parser.add_argument("publicacoes", type=Path, help="Planilha de publicações (.xlsx)")
-    parser.add_argument("legal_one", type=Path, help="Planilha de base do Legal One (.xlsx)")
+    parser.add_argument(
+        "publicacoes", type=Path, help="Planilha de publicações (.xlsx ou .xls)"
+    )
+    parser.add_argument(
+        "legal_one", type=Path, help="Planilha de base do Legal One (.xlsx ou .xls)"
+    )
     parser.add_argument("saida", type=Path, help="Caminho da planilha de saída (.xlsx)")
     parser.add_argument(
         "--aba-publicacoes", default=None, help="Nome da aba da planilha de publicações"
