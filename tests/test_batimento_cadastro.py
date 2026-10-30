@@ -6,6 +6,7 @@ usado), montando a mesma estrutura de pastas esperada pelo robô
 ``entrada/export_ged``) dentro de um diretório temporário.
 """
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -195,7 +196,9 @@ def _criar_planilha_robo_protocolo(path: Path) -> None:
         [
             "2026-10-09",
             "protocolocivel@deciofreire.com.br",
-            "2026-10-08",
+            # Valor datetime real (como vem do Excel), não string, para
+            # cobrir a conversão em `carregar_planilha_cadastro`.
+            datetime(2026, 10, 8),
             "Protocolo Civel <protocolo@deciofreire.com.br>",
             "0010903-71.2018.5.03.0029",
             "Re: CONFERÊNCIA E DISTRIBUIÇÃO - AGRAVO DE INSTRUMENTO - Cliente A",
@@ -210,7 +213,7 @@ def _criar_planilha_robo_protocolo(path: Path) -> None:
         [
             "2026-10-10",
             "protocolocivel@deciofreire.com.br",
-            "2026-10-09",
+            datetime(2026, 10, 9, 14, 30),
             "Protocolo Civel <protocolo@deciofreire.com.br>",
             "0766149-51.2026.8.18.0000",
             "Re: CONFERÊNCIA E DISTRIBUIÇÃO - AGRAVO DE INSTRUMENTO - Cliente X",
@@ -393,7 +396,7 @@ def test_planilha_robo_protocolo_e_reconhecida(tmp_path: Path):
     )
     assert linha_cadastrada["Responsável principal"] == "Dr. Fulano"
     assert linha_cadastrada["Remetente do e-mail"] == "protocolocivel@deciofreire.com.br"
-    assert linha_cadastrada["Data de envio do e-mail"] == "2026-10-08"
+    assert linha_cadastrada["Data de envio do e-mail"] == "08/10/2026"
 
     linha_pendente = linhas["0766149-51.2026.8.18.0000"]
     assert linha_pendente["Status"] == STATUS_PENDENTE
@@ -402,7 +405,9 @@ def test_planilha_robo_protocolo_e_reconhecida(tmp_path: Path):
     )
     assert linha_pendente["Responsável principal"] == "Dra. Sicrana"
     assert linha_pendente["Remetente do e-mail"] == "protocolocivel@deciofreire.com.br"
-    assert linha_pendente["Data de envio do e-mail"] == "2026-10-09"
+    # Hora diferente de meia-noite genuinamente presente na planilha de
+    # origem deve ser preservada no formato "dd/mm/AAAA HH:MM".
+    assert linha_pendente["Data de envio do e-mail"] == "09/10/2026 14:30"
 
 
 def test_colunas_remetente_e_data_email_ficam_vazias_sem_erro_no_formato_antigo(tmp_path: Path):
