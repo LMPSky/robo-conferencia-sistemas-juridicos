@@ -299,6 +299,69 @@ def _criar_planilha_simples_dois_colunas(path: Path) -> None:
     wb.save(path)
 
 
+def _criar_planilha_cadastros(path: Path) -> None:
+    """Planilha no formato "Cadastros" (aba já chamada "Cadastros", já
+    reconhecida pelo match de "cadastro" no nome da aba), com cabeçalhos
+    próprios: "Cliente" (cliente principal), "E-mail solicitante"
+    (remetente) e "Recebido em" (data de envio/solicitação do cadastro).
+    Inclui colunas parecidas ("Cliente Outros", "Posição cliente",
+    "CPF/CNPJ Cliente") que não devem ser confundidas com "Cliente"."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cadastros"
+    ws.append(
+        [
+            "Protocolo",
+            "Recebido em",
+            "E-mail solicitante",
+            "Status",
+            "Número CNJ",
+            "Número outro",
+            "Cliente",
+            "CPF/CNPJ Cliente",
+            "Posição cliente",
+            "Cliente Outros",
+            "Advogado responsável",
+            "Data envio DFA",
+        ]
+    )
+    # Bate com a base (mesmo CNJ) -> CADASTRADO
+    ws.append(
+        [
+            "PROT-0001",
+            datetime(2026, 11, 10, 9, 15),
+            "solicitante@escritorio.com.br",
+            "Cadastrado",
+            "0010903-71.2018.5.03.0029",
+            "",
+            "Cliente A",
+            "000.000.000-00",
+            "Autor",
+            "Cliente A Outros Nomes",
+            "Dr. Fulano",
+            datetime(2026, 11, 12),
+        ]
+    )
+    # Não bate com nada -> PENDENTE
+    ws.append(
+        [
+            "PROT-0002",
+            datetime(2026, 11, 11, 10, 0),
+            "outro.solicitante@escritorio.com.br",
+            "Pendente",
+            "0766149-51.2026.8.18.0000",
+            "",
+            "Cliente B",
+            "111.111.111-11",
+            "Réu",
+            "Cliente B Outros Nomes",
+            "Dra. Sicrana",
+            datetime(2026, 11, 13),
+        ]
+    )
+    wb.save(path)
+
+
 def _criar_export_ged(path: Path) -> None:
     df = pd.DataFrame(
         {
@@ -613,5 +676,48 @@ def test_base_legal_one_mista_com_e_sem_titulo_sao_reconhecidas_individualmente(
     }
     assert linhas["0010903-71.2018.5.03.0029"]["Status"] == STATUS_CADASTRADO
     assert linhas["0766149-51.2026.8.18.0000"]["Status"] == STATUS_PENDENTE
+
+
+def test_planilha_cadastros_e_reconhecida(tmp_path: Path):
+    """Planilha no formato "Cadastros" (aba já chamada "Cadastros") deve
+    ter numero_cnj/outro_numero/status/responsavel_principal reconhecidos
+    como já funcionava, e também os 3 campos adicionados: cliente_principal
+    (via "Cliente", isolado, sem confundir com "Cliente Outros"/"CPF/CNPJ
+    Cliente"/"Posição cliente"), remetente_email (via "E-mail solicitante")
+    e data_envio_email (via "Recebido em", preservando o tipo datetime e
+    formatando como dd/mm/aaaa HH:MM). A coluna "Data envio DFA" deve ser
+    reconhecida separadamente como "Data do processo" (fallback genérico
+    \\bdata\\b de `data_processo`), sem conflitar com "Recebido em"."""
+    (tmp_path / "entrada" / "base_legal_one").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "entrada" / "planilhas_cadastro").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "entrada" / "export_ged").mkdir(parents=True, exist_ok=True)
+
+    _criar_base_legal_one(tmp_path / "entrada" / "base_legal_one" / "base_legal_one.xlsx")
+    _criar_planilha_cadastros(
+        tmp_path / "entrada" / "planilhas_cadastro" / "Cadastros_13-11-2026.xlsx"
+    )
+
+    resultado = executar_batimento(tmp_path)
+
+    assert resultado.total_verificado == 2
+    df_detalhe = resultado.df_detalhe
+    linhas = {
+        linha["Número buscado"]: linha for _, linha in df_detalhe.iterrows()
+    }
+
+    linha_a = linhas["0010903-71.2018.5.03.0029"]
+    assert linha_a["Status"] == STATUS_CADASTRADO
+    assert linha_a["Cliente principal"] == "Cliente A"
+    assert linha_a["Responsável principal"] == "Dr. Fulano"
+    assert linha_a["Remetente do e-mail"] == "solicitante@escritorio.com.br"
+    assert linha_a["Data de envio do e-mail"] == "10/11/2026 09:15"
+    assert linha_a["Data do processo"] == "12/11/2026"
+
+    linha_b = linhas["0766149-51.2026.8.18.0000"]
+    assert linha_b["Status"] == STATUS_PENDENTE
+    assert linha_b["Cliente principal"] == "Cliente B"
+    assert linha_b["Remetente do e-mail"] == "outro.solicitante@escritorio.com.br"
+    assert linha_b["Data de envio do e-mail"] == "11/11/2026 10:00"
+    assert linha_b["Data do processo"] == "13/11/2026"
 
 

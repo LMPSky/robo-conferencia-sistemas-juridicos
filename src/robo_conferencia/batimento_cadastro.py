@@ -179,6 +179,10 @@ COLUNAS_CADASTRO = {
     "cliente_principal": (
         (r"client", r"principal"),
         (r"\bpartes\b",),
+        # Fallback de prioridade mais baixa: cabeçalho normalizado igual a
+        # exatamente "cliente" (ex: formato "Cadastros"), sem roubar colunas
+        # parecidas como "Cliente Outros"/"CPF/CNPJ Cliente"/"Posição cliente".
+        (r"^cliente$",),
     ),
     "responsavel_principal": (
         (r"respons", r"principal"),
@@ -195,6 +199,9 @@ COLUNAS_CADASTRO = {
         (r"de quem enviou",),
         (r"caixa", r"monitorada"),
         (r"e-?mail", r"destinatari"),
+        # Fallback de prioridade mais baixa: "E-mail solicitante" (formato
+        # "Cadastros"), e-mail de quem solicitou o cadastro do processo.
+        (r"solicitante",),
     ),
     # Data de envio do e-mail que originou o registro (não confundir com a
     # coluna "Data de envio" existente, que vem do export_ged e representa a
@@ -203,6 +210,11 @@ COLUNAS_CADASTRO = {
         (r"data", r"hora", r"e-?mail"),
         (r"data", r"envio", r"e-?mail"),
         (r"data", r"e-?mail"),
+        # Fallback de prioridade mais baixa: "Recebido em" (formato
+        # "Cadastros"), data/hora em que a solicitação de cadastro foi
+        # recebida — conceitualmente equivalente à "data de envio" da
+        # origem do registro.
+        (r"recebido",),
     ),
     # Data do processo/distribuição (ex: planilhas de 2 colunas "Processos:"
     # / "Data:"). Termo genérico demais para arriscar confundir com a data
